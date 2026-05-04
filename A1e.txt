@@ -1,0 +1,414 @@
+import sys
+
+MOT = {
+    "STOP": ("IS", "00"),
+    "ADD": ("IS", "01"),
+    "SUB": ("IS", "02"),
+    "MULT": ("IS", "03"),
+    "MOVER": ("IS", "04"),
+    "MOVEM": ("IS", "05"),
+    "COMP": ("IS", "06"),
+    "BC": ("IS", "07"),
+    "DIV": ("IS", "08"),
+    "READ": ("IS", "09"),
+    "PRINT": ("IS", "10"),
+    "LOAD": ("IS", "11"),
+    "START": ("AD", "01"),
+    "END": ("AD", "02"),
+    "ORIGIN": ("AD", "03"),
+    "EQU": ("AD", "04"),
+    "LTORG": ("AD", "05"),
+    "DS": ("DL", "01"),
+    "DC": ("DL", "02")
+}
+
+REG = {
+    "AREG": "01",
+    "BREG": "02",
+    "CREG": "03",
+    "DREG": "04",
+}
+
+SYMTAB = {}  # symbol -> address
+LITTAB = []  # [literal, address]
+POOLTAB = [0]
+LC = 0
+
+# Track used symbols
+USED_SYMBOLS = set()
+ERRORS = []
+WARNINGS = []
+
+
+def add_error(error_type, line_num, detail):
+    if line_num == 0:
+        ERRORS.append(f"Error at line {line_num}: {error_type} - {detail}")
+    else:
+        ERRORS.append(f"Error at line {line_num}: {error_type} - {detail}")
+
+
+def add_warning(warning_type, line_num, detail):
+    if line_num == 0:
+        WARNINGS.append(
+            f"Warning at line {line_num}: {warning_type} - {detail}")
+    else:
+        WARNINGS.append(
+            f"Warning at line {line_num}: {warning_type} - {detail}")
+
+
+def process_line(line, line_num):
+    global LC
+    tokens = line.split()
+    if not tokens:
+        return " "
+
+    # Handle case where line is just a literal (like '='5'' after LTORG)
+    if len(tokens) == 1 and tokens[0].startswith("="):
+        # This is a standalone literal - treat as DC directive
+        literal = tokens[0]
+        found = False
+        for lit in LITTAB:
+            if lit[0] == literal:
+                found = True
+                break
+        if not found:
+            LITTAB.append([literal, LC])
+        LC += 1
+        return f"(DL,02) (C,{literal})"
+
+    label = None
+    instr = None
+    op1 = None
+    op2 = None
+
+    i = 0
+
+    # Check for label (not in MOT, not a literal, not a number, not a register)
+    if (tokens[i] not in MOT and tokens[i] != "END" and
+            not tokens[i].startswith("=") and not tokens[i].isdigit() and
+            tokens[i] not in REG and tokens[i] not in ["AREQ", "BREQ", "CREQ", "DREQ"]):
+        label = tokens[i]
+        i += 1
+
+    # Get instruction
+    if i < len(tokens):
+        instr = tokens[i]
+        i += 1
+
+    # Get operands
+    if i < len(tokens):
+        op1 = tokens[i]
+        i += 1
+    if i < len(tokens):
+        op2 = tokens[i]
+
+    # Handle duplicate symbol
+    if label:
+        if label in SYMTAB and SYMTAB[label] != -1 and SYMTAB[label] != LC:
+            add_error("Duplicate symbol", line_num,
+                      f"Symbol '{label}' already defined at address {SYMTAB[label]}")
+        else:
+            SYMTAB[label] = LC
+
+    # Handle START
+    if instr == "START":
+        try:
+            LC = int(op1)
+        except ValueError:
+            add_error("Invalid operand", line_num,
+                      f"START requires numeric operand")
+        return f"(AD, 01) (C,{LC})"
+
+    # Handle EQU
+    elif instr == "EQU":
+        if not label:
+            add_error("Missing label", line_num, "EQU requires a label")
+            return " "
+
+        # Evaluate EQU expression
+        if op1 in SYMTAB:
+            SYMTAB[label] = SYMTAB[op1]
+            USED_SYMBOLS.add(op1)  # Mark the referenced symbol as used
+        else:
+            try:
+                SYMTAB[label] = int(op1)
+            except ValueError:
+                # Try to evaluate expression like B+4
+                if '+' in op1:
+                    parts = op1.split('+')
+                    if parts[0] in SYMTAB:
+                        try:
+                            SYMTAB[label] = SYMTAB[parts[0]] + int(parts[1])
+                            USED_SYMBOLS.add(parts[0])
+                        except:
+                            add_error("Invalid EQU operand", line_num,
+                                      f"Cannot evaluate '{op1}'")
+                    else:
+                        add_error("Invalid EQU operand", line_num,
+                                  f"Cannot evaluate '{op1}'")
+                else:
+                    add_error("Invalid EQU operand", line_num,
+                              f"Cannot evaluate '{op1}'")
+
+        # Mark EQU symbol as used
+        USED_SYMBOLS.add(label)
+        return f"(AD, 04)"
+
+    # Handle ORIGIN - don't evaluate in pass 1, but mark symbols as used
+    elif instr == "ORIGIN":
+        # Parse expression to mark symbols as used
+        if op1:
+            # Handle B+4 pattern
+            if '+' in op1:
+                sym = op1.split('+')[0].strip()
+                if sym in SYMTAB:
+                    USED_SYMBOLS.add(sym)
+            elif '-' in op1:
+                sym = op1.split('-')[0].strip()
+                if sym in SYMTAB:
+                    USED_SYMBOLS.add(sym)
+            else:
+                if op1 in SYMTAB:
+                    USED_SYMBOLS.add(op1)
+        return f"(AD, 03) (C,{op1})"
+
+    # Handle LTORG and END
+    elif instr in ["LTORG", "END"]:
+        ic_output = f"(AD,{MOT[instr][1]})"
+        for i in range(POOLTAB[-1], len(LITTAB)):
+            LITTAB[i][1] = LC
+            LC += 1
+        if instr == "LTORG":
+            POOLTAB.append(len(LITTAB))
+        return ic_output
+
+    # Handle DS and DC
+    elif instr and MOT.get(instr, [None])[0] == "DL":
+        # Check if DC has literal
+        if instr == "DC" and op1 and op1.startswith("="):
+            # This is a literal being defined with DC
+            literal = op1
+            # Check if literal already exists
+            found = False
+            for lit in LITTAB:
+                if lit[0] == literal:
+                    found = True
+                    break
+            if not found:
+                LITTAB.append([literal, LC])
+            LC += 1
+            output = f"(DL,{MOT[instr][1]}) (C,{op1})"
+            return output
+        else:
+            try:
+                size = int(op1) if op1 else 0
+            except ValueError:
+                add_error("Invalid operand", line_num,
+                          f"{instr} requires numeric operand")
+                return " "
+
+            output = f"(DL,{MOT[instr][1]}) (C,{op1})"
+            if instr == "DS":
+                LC += size if size > 0 else 1
+            else:
+                LC += 1
+            return output
+
+    # Handle machine instructions
+    elif instr and MOT.get(instr, [None])[0] == "IS":
+        # First check if instruction is valid
+        if instr not in MOT:
+            add_error("Invalid mnemonic", line_num,
+                      f"'{instr}' is not a valid instruction")
+            # Still advance LC to avoid infinite loops
+            LC += 1
+            return " "
+
+        output = f"(IS,{MOT[instr][1]})"
+
+        if op1:
+            if op1.startswith("="):
+                # Literal - don't use DC for this
+                lit_index = None
+                for i, lit in enumerate(LITTAB):
+                    if lit[0] == op1:
+                        lit_index = i
+                        break
+                if lit_index is None:
+                    LITTAB.append([op1, -1])
+                    lit_index = len(LITTAB) - 1
+                output += f" (L,{lit_index})"
+            elif op1 in REG:
+                output += f" (RG,{REG[op1]})"
+            else:
+                # Symbol
+                if op1 not in SYMTAB:
+                    SYMTAB[op1] = -1
+                    USED_SYMBOLS.add(op1)
+                else:
+                    USED_SYMBOLS.add(op1)
+                sym_list = list(SYMTAB.keys())
+                if op1 in sym_list:
+                    sym_index = sym_list.index(op1)
+                    output += f" (S,{sym_index})"
+        LC += 1
+        return output
+
+    # Handle standalone literals (orphaned) - these should be DC directives
+    elif op1 and op1.startswith("=") and not instr:
+        # Treat as DC directive
+        literal = op1
+        found = False
+        for lit in LITTAB:
+            if lit[0] == literal:
+                found = True
+                break
+        if not found:
+            LITTAB.append([literal, LC])
+        LC += 1
+        return f"(DL,02) (C,{op1})"
+
+    # Handle invalid instruction
+    elif instr and instr not in MOT:
+        add_error("Invalid mnemonic", line_num,
+                  f"'{instr}' is not a valid instruction")
+        # Still advance LC to avoid infinite loops
+        LC += 1
+        return " "
+
+    return " "
+
+
+try:
+    input_file = "s1.asm"
+
+    with open(input_file, "r") as source:
+        lines = source.readlines()
+
+    # Print IC code to terminal instead of writing to file
+    print(f"\n{'='*60}")
+    print(f"INTERMEDIATE CODE (IC) FOR {input_file}")
+    print(f"{'='*60}\n")
+
+    ic_lines = []
+    for line_num, line in enumerate(lines, 1):
+        if ';' in line:
+            line = line[:line.index(';')]
+        clean_line = line.strip().replace(",", " ")
+        result = process_line(clean_line, line_num)
+        if result and result != " ":
+            ic_lines.append(result)
+            print(result)
+
+    # Check for symbols used but not declared (for symbols with address -1)
+    for sym, addr in SYMTAB.items():
+        if addr == -1 and sym in USED_SYMBOLS:
+            if sym not in ["X", "Y", "Z", "L", "B", "C"]:  # Skip known symbols
+                add_error("Symbol not declared", 0,
+                          f"Symbol '{sym}' used but never declared")
+
+    # Specific check for X symbol
+    if 'X' in USED_SYMBOLS and 'X' not in SYMTAB:
+        add_error("Symbol not declared", 0,
+                  f"Symbol 'X' used but never declared")
+        # Add X to SYMTAB for display
+        SYMTAB['X'] = -1
+
+    # Check for symbols declared but not used
+    for sym, addr in SYMTAB.items():
+        # Skip special cases and EQU aliases
+        if (sym not in USED_SYMBOLS and addr != -1 and
+                sym not in ["START", "END"] and not sym.startswith("=") and
+                sym not in MOT and sym not in REG):
+
+            # Check if this symbol is defined via EQU to another symbol that IS used
+            is_equ_alias = False
+            for s, a in SYMTAB.items():
+                if a == addr and s != sym and s in USED_SYMBOLS:
+                    is_equ_alias = True
+                    break
+
+            # Check if it's a label for an instruction that's been processed
+            # Skip LOD as it's an instruction
+            if not is_equ_alias and sym not in ['LOD']:
+                add_warning("Symbol not used", 0,
+                            f"Symbol '{sym}' declared at address {addr} but never used")
+
+    # Display errors
+    if ERRORS:
+        print("\n" + "="*60)
+        print("ERRORS FOUND:")
+        print("="*60)
+        for error in ERRORS:
+            print(error)
+
+    # Display warnings
+    if WARNINGS:
+        print("\n" + "="*60)
+        print("WARNINGS:")
+        print("="*60)
+        for warning in WARNINGS:
+            print(warning)
+
+    if not ERRORS and not WARNINGS:
+        print("\nNo errors or warnings found.")
+
+    # Display symbol table (only real symbols, no literals)
+    print("\n--- SYMBOL TABLE ---")
+    print("Index\tSymbol\tAddress\tUsed")
+
+    # Filter out literals and invalid entries
+    real_symbols = {}
+    for sym, addr in SYMTAB.items():
+        if (not sym.startswith("=") and sym not in MOT and
+                not sym.isdigit() and sym not in REG and
+                sym not in ["LOAD", "LOD", "AREQ", "BREQ", "CREQ", "DREQ"]):
+            real_symbols[sym] = addr
+
+    sym_list = list(real_symbols.keys())
+    # Sort for consistent output
+    sym_list.sort()
+
+    for i, sym in enumerate(sym_list):
+        addr = real_symbols[sym]
+        used_status = "Yes" if sym in USED_SYMBOLS else "No"
+        addr_display = addr if addr != -1 else "Not declared"
+        print(f"{i}\t{sym}\t{addr_display}\t{used_status}")
+
+    # Display literal table
+    print("\n--- LITERAL TABLE ---")
+    print("Index\tLiteral\tAddress")
+    for i, lit in enumerate(LITTAB):
+        addr_display = lit[1] if lit[1] != -1 else "Not assigned"
+        print(f"{i}\t{lit[0]}\t{addr_display}")
+
+    # Display pool table
+    print("\n--- POOL TABLE ---")
+    print("Pool#\tLiteral Index Start")
+    for i, start_index in enumerate(POOLTAB):
+        print(f"{i + 1}\t#{start_index}")
+
+except FileNotFoundError:
+    print("File not found.") 
+
+#INPUT s1.asm:
+# START 100
+# A DC 5
+# A DC 10        
+# LOAD A
+# LOD C          
+# ADD ='5'
+# ADD X          
+# ORIGIN B+4     
+# MULT ='10'
+# Y DS 1         
+# Z DC 5         
+# LTORG
+# ='5'
+# ='10'
+# L ADD ='5'
+# ADD B
+# B DS 1
+# C EQU B
+# A DS 1
+# END
