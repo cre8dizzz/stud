@@ -1,0 +1,43 @@
+%{
+#include <stdio.h>
+%}
+
+%option noyywrap
+
+%%
+
+[ \t\n]+    ;
+
+(car|house|man|state|ocean|country|city)    { printf("%s --> NOUN\n", yytext); }
+
+(she|he|we|they|it)                         { printf("%s --> PRONOUN\n", yytext); }
+
+(come|go|walk|did|have|read|write)          { printf("%s --> VERB\n", yytext); }
+
+(pretty|old|blue|smart)                     { printf("%s --> ADJECTIVE\n", yytext); }
+
+(abnormally|accidentally|actually|beautifully|bitterly|brightly|calmly)    { printf("%s --> ADVERB\n", yytext); }
+
+(by|with|about|until)                       { printf("%s --> PREPOSITION\n", yytext); }
+
+(and|but|or|while|because)                  { printf("%s --> CONJUNCTION\n", yytext); }
+
+(oh\!|wow\!|oops\!)                         { printf("%s --> INTERJECTION\n", yytext); }
+
+[a-zA-Z]+                                   { printf("%s --> UNKNOWN WORD\n", yytext); }
+
+.                                           { printf("%s --> INVALID TOKEN\n", yytext); }
+
+%%
+
+int main()
+{
+    printf("Enter English words/sentence:\n");
+    printf("(Press Ctrl+Z then Enter to stop)\n");
+    yylex();
+    return 0;
+}
+
+//Input -> 
+she and he walk with car she walk wow!
+

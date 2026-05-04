@@ -1,0 +1,64 @@
+//LEX FILE 
+%{
+#include "4C.tab.h"
+#include<stdio.h>
+%}
+
+%option noyywrap
+
+%%
+
+[a-zA-Z]    { return A; }
+[0-9]       { return N; }
+"_"         { return U; }
+
+\n          { return 0; }
+
+.           { return yytext[0]; }
+
+%%
+
+//YACC FILE
+%{
+#include<stdio.h>
+#include<stdlib.h>
+
+int yylex();
+void yyerror();
+%}
+
+%token A N U
+
+%%
+
+S : A
+  | A X
+  ;
+
+X : A
+  | N
+  | U
+  | X A
+  | X N
+  | X U
+  ;
+
+%%
+
+int main()
+{
+    printf("Enter the string: ");
+    if(yyparse() == 0)
+        printf("Valid variable\n");
+}
+
+void yyerror()
+{
+    printf("Invalid variable\n");
+    exit(0);
+}
+
+
+//INPUT -> 
+// abc2
+// 2abc

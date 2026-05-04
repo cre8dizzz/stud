@@ -1,0 +1,358 @@
+# -------------------------
+# PASS-1 ASSEMBLER (FULLY CORRECTED)
+# -------------------------
+
+with open("sample.asm", "r") as f:
+    lines = f.readlines()
+
+# -------------------------
+# MOT TABLE
+# -------------------------
+MOT = {
+    "STOP":  ("IS", "00"),
+    "ADD":   ("IS", "01"),
+    "SUB":   ("IS", "02"),
+    "MULT":  ("IS", "03"),
+    "MOVER": ("IS", "04"),
+    "MOVEM": ("IS", "05"),
+    "LOAD":  ("IS", "11"),
+
+    "START":  ("AD", "01"),
+    "END":    ("AD", "02"),
+    "ORIGIN": ("AD", "03"),
+    "EQU":    ("AD", "04"),
+    "LTORG":  ("AD", "05"),
+
+    "DS": ("DL", "01"),
+    "DC": ("DL", "02")
+}
+
+REG = {
+    "AREG": "01",
+    "BREG": "02",
+    "CREG": "03",
+    "DREG": "04"
+}
+
+# -------------------------
+# TABLES
+# -------------------------
+SYMTAB  = []   # [ [symbol, address], ... ]
+LITTAB  = []   # [ [literal, address], ... ]
+POOLTAB = [1]  # 1-based start index of each pool in LITTAB
+
+# -------------------------
+# HELPERS
+# -------------------------
+def get_sym(sym):
+    """Return index of symbol in SYMTAB; add if not present."""
+    for i in range(len(SYMTAB)):
+        if SYMTAB[i][0] == sym:
+            return i
+    SYMTAB.append([sym, None])
+    return len(SYMTAB) - 1
+
+def get_lit(lit, pool_ptr):
+    """
+    Return index of literal in LITTAB within current pool only.
+    If not found in current pool, add as new entry.
+    This ensures each pool gets its own literal entries.
+    """
+    # Search only in current pool (from pool_ptr to end)
+    for i in range(pool_ptr, len(LITTAB)):
+        if LITTAB[i][0] == lit:
+            return i
+    # Not found in current pool → add new entry
+    LITTAB.append([lit, None])
+    return len(LITTAB) - 1
+
+# -------------------------
+# INTERMEDIATE CODE STORAGE
+# -------------------------
+intermediate = []
+
+# -------------------------
+# PASS 1
+# -------------------------
+LC       = 0
+pool_ptr = 0  # index into LITTAB where current pool starts
+
+for line in lines:
+    line = line.strip()
+
+    # Skip empty or comment lines
+    if not line or line.startswith(";"):
+        continue
+
+    tokens = line.replace(",", " ").split()
+    if len(tokens) == 0:
+        continue
+
+    label    = None
+    mnemonic = None
+    operands = []
+
+    # -------------------------
+    # DETECT LABEL
+    # -------------------------
+    if tokens[0] not in MOT:
+        label  = tokens[0]
+        tokens = tokens[1:]
+
+    if len(tokens) == 0:
+        continue
+
+    mnemonic = tokens[0]
+    operands = tokens[1:]
+
+    mot_entry = MOT.get(mnemonic)
+    if mot_entry is None:
+        print(f"ERROR: Unknown mnemonic '{mnemonic}'")
+        continue
+
+    cls, opcode = mot_entry
+
+    # -----------------------------------------------
+    # START
+    # -----------------------------------------------
+    if mnemonic == "START":
+        if operands:
+            LC = int(operands[0])
+        entry = f"(AD,01) (C,{LC})"
+        intermediate.append(entry)
+        print(entry)
+        continue
+
+    # -----------------------------------------------
+    # ORIGIN
+    # -----------------------------------------------
+    if mnemonic == "ORIGIN":
+        expr = operands[0] if operands else ""
+
+        if "+" in expr:
+            parts    = expr.split("+")
+            sym      = parts[0].strip()
+            offset   = int(parts[1].strip())
+            sym_addr = SYMTAB[get_sym(sym)][1]
+            if sym_addr is None:
+                print(f"ERROR: Symbol '{sym}' undefined in ORIGIN.")
+                continue
+            LC = sym_addr + offset
+
+        elif "-" in expr:
+            parts    = expr.split("-")
+            sym      = parts[0].strip()
+            offset   = int(parts[1].strip())
+            sym_addr = SYMTAB[get_sym(sym)][1]
+            if sym_addr is None:
+                print(f"ERROR: Symbol '{sym}' undefined in ORIGIN.")
+                continue
+            LC = sym_addr - offset
+
+        else:
+            if expr.lstrip("-").isdigit():
+                LC = int(expr)
+            else:
+                sym_addr = SYMTAB[get_sym(expr)][1]
+                if sym_addr is None:
+                    print(f"ERROR: Symbol '{expr}' undefined in ORIGIN.")
+                    continue
+                LC = sym_addr
+
+        entry = f"(AD,03) (C,{LC})"
+        intermediate.append(entry)
+        print(entry)
+        continue
+
+    # -----------------------------------------------
+    # EQU
+    # -----------------------------------------------
+    if mnemonic == "EQU":
+        if label is None:
+            print("ERROR: EQU requires a label.")
+            continue
+        if not operands:
+            print("ERROR: EQU requires an operand.")
+            continue
+
+        rhs = operands[0]
+
+        if rhs.lstrip("-").isdigit():
+            rhs_addr = int(rhs)
+        else:
+            rhs_idx  = get_sym(rhs)
+            rhs_addr = SYMTAB[rhs_idx][1]
+
+        lhs_idx = get_sym(label)
+        SYMTAB[lhs_idx][1] = rhs_addr
+
+        entry = f"(AD,04)"
+        intermediate.append(entry)
+        print(entry)
+        continue
+
+    # -----------------------------------------------
+    # LTORG
+    # -----------------------------------------------
+    if mnemonic == "LTORG":
+        entry = "(AD,05)"
+        intermediate.append(entry)
+        print(entry)
+
+        # Assign LC to all unresolved literals in current pool
+        for i in range(pool_ptr, len(LITTAB)):
+            if LITTAB[i][1] is None:
+                LITTAB[i][1] = LC
+                lit_entry = f"LC={LC} (DL,02) (C,{LITTAB[i][0]})"
+                intermediate.append(lit_entry)
+                print(lit_entry)
+                LC += 1
+
+        # Move pool pointer to start of next pool
+        pool_ptr = len(LITTAB)
+        # Next pool starts at next position (1-based)
+        POOLTAB.append(pool_ptr + 1)
+        continue
+
+    # -----------------------------------------------
+    # END
+    # -----------------------------------------------
+    if mnemonic == "END":
+        entry = "(AD,02)"
+        intermediate.append(entry)
+        print(entry)
+
+        # Assign LC to remaining unresolved literals
+        for i in range(pool_ptr, len(LITTAB)):
+            if LITTAB[i][1] is None:
+                LITTAB[i][1] = LC
+                lit_entry = f"LC={LC} (DL,02) (C,{LITTAB[i][0]})"
+                intermediate.append(lit_entry)
+                print(lit_entry)
+                LC += 1
+
+        pool_ptr = len(LITTAB)
+        break
+
+    # -----------------------------------------------
+    # DS - Define Storage
+    # -----------------------------------------------
+    if mnemonic == "DS":
+        if label is not None:
+            idx = get_sym(label)
+            if SYMTAB[idx][1] is None:
+                SYMTAB[idx][1] = LC
+
+        size  = int(operands[0]) if operands else 1
+        entry = f"LC={LC} (DL,01) (C,{size})"
+        intermediate.append(entry)
+        print(entry)
+        LC += size
+        continue
+
+    # -----------------------------------------------
+    # DC - Define Constant
+    # -----------------------------------------------
+    if mnemonic == "DC":
+        if label is not None:
+            idx = get_sym(label)
+            if SYMTAB[idx][1] is None:
+                SYMTAB[idx][1] = LC
+
+        val   = operands[0] if operands else "0"
+        entry = f"LC={LC} (DL,02) (C,{val})"
+        intermediate.append(entry)
+        print(entry)
+        LC += 1
+        continue
+
+    # -----------------------------------------------
+    # IS - Machine Instructions
+    # -----------------------------------------------
+    if cls == "IS":
+        # Assign label to current LC
+        if label is not None:
+            idx = get_sym(label)
+            if SYMTAB[idx][1] is None:
+                SYMTAB[idx][1] = LC
+
+        line_out = f"LC={LC} (IS,{opcode})"
+
+        for op in operands:
+            op = op.strip()
+
+            if op in REG:
+                line_out += f" (RG,{REG[op]})"
+
+            elif op.startswith("='") or op.startswith('="'):
+                # KEY FIX: pass pool_ptr so each pool tracks own literals
+                idx       = get_lit(op, pool_ptr)
+                line_out += f" (L,{idx+1})"
+
+            elif op.lstrip("-").isdigit():
+                line_out += f" (C,{op})"
+
+            else:
+                idx       = get_sym(op)
+                line_out += f" (S,{idx+1})"
+
+        intermediate.append(line_out)
+        print(line_out)
+        LC += 1
+        continue
+
+# ==========================================
+# FINAL TABLE OUTPUT
+# ==========================================
+
+print("\n" + "="*45)
+print("        SYMBOL TABLE (SYMTAB)")
+print("="*45)
+print(f"{'No.':<6} {'Symbol':<15} {'Address'}")
+print("-"*45)
+for i, s in enumerate(SYMTAB, 1):
+    addr = s[1] if s[1] is not None else "---"
+    print(f"{i:<6} {s[0]:<15} {addr}")
+
+print("\n" + "="*45)
+print("        LITERAL TABLE (LITTAB)")
+print("="*45)
+print(f"{'No.':<6} {'Literal':<15} {'Address'}")
+print("-"*45)
+for i, l in enumerate(LITTAB, 1):
+    addr = l[1] if l[1] is not None else "---"
+    print(f"{i:<6} {l[0]:<15} {addr}")
+
+print("\n" + "="*45)
+print("        POOL TABLE (POOLTAB)")
+print("="*45)
+print(f"{'Pool No.':<12} {'LITTAB Start Index'}")
+print("-"*45)
+for i, p in enumerate(POOLTAB, 1):
+    print(f"{i:<12} {p}")
+
+print("\n" + "="*45)
+print("        INTERMEDIATE CODE")
+print("="*45)
+for entry in intermediate:
+    print(entry)
+
+
+
+#sample.asm ->
+# START 100
+# A DC 1
+# LOAD AREG,A
+# LOAD AREG,C
+# ADD AREG,='5'
+# ADD AREG,D
+# D DS 1
+# ORIGIN A+2
+# MULT AREG,='10'
+# ADD AREG,L
+# LTORG
+# L ADD AREG,='5'
+# ADD AREG,B
+# B DS 1
+# C EQU B
+# END 

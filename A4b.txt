@@ -1,0 +1,95 @@
+//LEX FILE 
+%{
+#include "4B.tab.h"
+#include <string.h>
+#include <stdlib.h>
+%}
+
+%option noyywrap
+
+%%
+"sqrt"        return SQRT;
+"strlen"      return STRLEN;
+"toupper"     return UPPER;
+"tolower"     return LOWER;
+"abs"         return ABS;
+
+[0-9]+        { yylval.num = atoi(yytext); return NUM; }
+[a-zA-Z]+     { yylval.str = strdup(yytext); return ID; }
+
+"("           return '(';
+")"           return ')';
+
+[\t ]         ;
+\n            return 0;
+
+%%
+
+
+//YACC FILE
+%{
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <ctype.h>
+
+int yylex();
+void yyerror();
+%}
+
+%union {
+    int num;
+    char* str;
+}
+
+%token SQRT STRLEN UPPER LOWER ABS
+%token <num> NUM
+%token <str> ID
+
+%%
+
+S : EXP { printf("Function evaluated successfully\n"); }
+  ;
+
+EXP :
+      SQRT '(' NUM ')'    { printf("sqrt(%d) = %f\n", $3, sqrt($3)); }
+
+    | STRLEN '(' ID ')'   { printf("strlen(%s) = %lu\n", $3, strlen($3)); }
+
+    | UPPER '(' ID ')'    {
+                            for(int i=0; $3[i]; i++)
+                                $3[i] = toupper($3[i]);
+                            printf("toupper = %s\n", $3);
+                          }
+
+    | LOWER '(' ID ')'    {
+                            for(int i=0; $3[i]; i++)
+                                $3[i] = tolower($3[i]);
+                            printf("tolower = %s\n", $3);
+                          }
+
+    | ABS '(' NUM ')'     {
+                            printf("abs(%d) = %d\n", $3, abs($3));
+                          }
+  ;
+
+%%
+
+int main()
+{
+    printf("Enter function: ");
+    yyparse();
+}
+
+void yyerror()
+{
+    printf("Invalid function\n");
+}
+
+//INPUT -> 
+// sqrt(4)
+// strlen("Hello")
+// toupper(hello)
+// tolower("HELLO")
+// abs(-10)

@@ -1,0 +1,247 @@
+//CODE
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.*;
+
+public class MacroProcessor2 {
+
+    // -------- MNT ENTRY --------
+    static class MNTEntry {
+        String name;
+        int paramCount;
+        int mdtIndex;
+        List<String> ala;
+
+        MNTEntry(String name, int mdtIndex, List<String> ala) {
+            this.name = name;
+            this.mdtIndex = mdtIndex;
+            this.ala = new ArrayList<>(ala);
+            this.paramCount = ala.size();
+        }
+
+        public String toString() {
+            return String.format("%-10s %-5d %-5d", name, paramCount, mdtIndex);
+        }
+    }
+
+    static List<MNTEntry> MNT = new ArrayList<>();
+    static Map<String, MNTEntry> MNT_MAP = new HashMap<>();
+    static List<String> MDT = new ArrayList<>();
+
+    // ================= PASS 1 =================
+    static List<String> pass1(List<String> source) {
+
+        System.out.println("\n------------- PASS 1 : MACRO DEFINITION -------------\n");
+
+        List<String> intermediate = new ArrayList<>();
+        List<String> localALA = new ArrayList<>();
+        int macroLevel = 0;
+        int mdtPtr = 0;
+        String macroName = "";
+
+        for (String line : source) {
+
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+
+            String[] tokens = trimmed.split("\\s+");
+
+            // MACRO START
+            if (tokens[0].equals("MACRO")) {
+
+                macroLevel++;
+
+                if (macroLevel == 1) {
+
+                    macroName = tokens[1];
+                    localALA = new ArrayList<>();
+
+                    if (tokens.length > 2) {
+                        String[] params = tokens[2].split(",");
+                        localALA.addAll(Arrays.asList(params));
+                    }
+
+                    MNTEntry entry = new MNTEntry(macroName, mdtPtr, localALA);
+                    MNT.add(entry);
+                    MNT_MAP.put(macroName, entry);
+
+                    System.out.println("Macro found: " + macroName);
+
+                    if (!localALA.isEmpty()) {
+                        for (int i = 0; i < localALA.size(); i++)
+                            System.out.println("  " + localALA.get(i) + " -> #" + i);
+                    } else {
+                        System.out.println("  No Parameters");
+                    }
+
+                    System.out.println();
+                }
+                continue;
+            }
+
+            // MEND
+            if (tokens[0].equals("MEND")) {
+
+                if (macroLevel == 1) {
+                    MDT.add("MEND");
+                    mdtPtr++;
+                }
+
+                macroLevel--;
+                continue;
+            }
+
+            // Inside macro definition
+            if (macroLevel > 0) {
+
+                String processed = trimmed;
+
+                for (int i = 0; i < localALA.size(); i++)
+                    processed = processed.replace(localALA.get(i), "#" + i);
+
+                MDT.add(processed);
+                mdtPtr++;
+            }
+            else {
+                intermediate.add(trimmed);
+            }
+        }
+
+        return intermediate;
+    }
+
+    // ================= RECURSIVE LATE EXPANSION =================
+    static void expandMacro(String line, List<String> output, int depth) {
+
+        String[] tokens = line.split("\\s+");
+        MNTEntry entry = MNT_MAP.get(tokens[0]);
+
+        if (entry == null) {
+            output.add(line);
+            return;
+        }
+
+        // Java 8 compatible indentation
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < depth; i++) {
+            sb.append("  ");
+        }
+        String indent = sb.toString();
+
+        System.out.println(indent + "Expanding macro: " + tokens[0]);
+
+        List<String> actuals = new ArrayList<>();
+        if (tokens.length > 1) {
+            String[] args = tokens[1].split(",");
+            actuals.addAll(Arrays.asList(args));
+        }
+
+        for (int i = 0; i < actuals.size(); i++)
+            System.out.println(indent + "  #" + i + " -> " + actuals.get(i));
+
+        int idx = entry.mdtIndex;
+
+        while (!MDT.get(idx).equals("MEND")) {
+
+            String stmt = MDT.get(idx);
+
+            for (int i = 0; i < actuals.size(); i++)
+                stmt = stmt.replace("#" + i, actuals.get(i));
+
+            String firstWord = stmt.split("\\s+")[0];
+
+            if (MNT_MAP.containsKey(firstWord)) {
+                expandMacro(stmt, output, depth + 1);  // recursive expansion
+            } else {
+                output.add(stmt);
+                System.out.println(indent + "  " + stmt);
+            }
+
+            idx++;
+        }
+    }
+
+    // ================= PASS 2 =================
+    static List<String> pass2(List<String> intermediate) {
+
+        System.out.println("\n------------- PASS 2 : MACRO EXPANSION (Nested Supported - Late Expansion) -------------\n");
+
+        List<String> output = new ArrayList<>();
+
+        for (String line : intermediate) {
+            expandMacro(line, output, 0);
+        }
+
+        return output;
+    }
+
+    // ================= DISPLAY =================
+    static void displayTables() {
+
+        System.out.println("\n------------- MNT TABLE -------------");
+        System.out.println("Name       Params MDT_Index");
+        for (MNTEntry e : MNT)
+            System.out.println(e);
+
+        System.out.println("\n------------- MDT TABLE -------------");
+        for (int i = 0; i < MDT.size(); i++)
+            System.out.println(i + "  " + MDT.get(i));
+    }
+
+    // ================= MAIN =================
+    
+    public static void main(String[] args) {
+
+    List<String> source = new ArrayList<>();
+
+    try {
+        // Change path to your .asm file location
+        source = Files.readAllLines(Paths.get("s.asm"));
+    } 
+    catch (IOException e) {
+
+        System.out.println("Error reading file: " + e.getMessage());
+        return;
+    }
+
+    System.out.println("------------- ORIGINAL SOURCE CODE -------------\n");
+    source.forEach(System.out::println);
+
+    List<String> intermediate = pass1(source);
+
+    displayTables();
+
+    System.out.println("\n------------- INTERMEDIATE CODE -------------\n");
+    intermediate.forEach(System.out::println);
+
+    List<String> finalCode = pass2(intermediate);
+
+    System.out.println("\n------------- FINAL EXPANDED CODE -------------\n");
+    finalCode.forEach(System.out::println);
+}
+}
+//s.asm
+// LOAD A
+// STORE B
+
+// MACRO ABC
+// LOAD p
+// SUB q
+// MEND
+
+// MACRO ADDI ARG
+// LOAD X
+// STORE ARG
+// MEND
+
+
+// MACRO ADD5 A1,A2,A3
+// STORE A2
+// ADDI A1
+// LOAD A3
+// MEND
+
+// ABC
+// ADD5 D1,D2,D3
+// END

@@ -1,0 +1,90 @@
+%{
+#include <stdio.h>
+#include <string.h>
+
+struct symbol {
+    char token[50];
+    char type[20];
+    int count;
+};
+
+struct symbol table[100];
+int tableSize = 0;
+
+void addToTable(char *token, char *type)
+{
+    int i;
+    for(i = 0; i < tableSize; i++)
+    {
+        if(strcmp(table[i].token, token) == 0)
+        {
+            table[i].count++;
+            printf("%-15s --> %-15s (Already in Symbol Table)\n", token, type);
+            return;
+        }
+    }
+    strcpy(table[tableSize].token, token);
+    strcpy(table[tableSize].type, type);
+    table[tableSize].count = 1;
+    tableSize++;
+    printf("%-15s --> %-15s (Added to Symbol Table)\n", token, type);
+}
+
+void printTable()
+{
+    int i;
+    printf("\n========================================\n");
+    printf("           SYMBOL TABLE\n");
+    printf("========================================\n");
+    printf("%-5s %-15s %-15s %-5s\n", "No.", "TOKEN", "TYPE", "COUNT");
+    printf("----------------------------------------\n");
+    for(i = 0; i < tableSize; i++)
+    {
+        printf("%-5d %-15s %-15s %-5d\n", i+1, table[i].token, table[i].type, table[i].count);
+    }
+    printf("========================================\n");
+}
+
+%}
+
+%option noyywrap
+
+%%
+
+[ \t\n]+    ;
+
+(car|house|man|state|ocean|country|city)    { addToTable(yytext, "NOUN"); }
+
+(she|he|we|they|it)                         { addToTable(yytext, "PRONOUN"); }
+
+(come|go|walk|did|have|read|write)          { addToTable(yytext, "VERB"); }
+
+(pretty|old|blue|smart)                     { addToTable(yytext, "ADJECTIVE"); }
+
+(abnormally|accidentally|actually|beautifully|bitterly|brightly|calmly)    { addToTable(yytext, "ADVERB"); }
+
+(by|with|about|until)                       { addToTable(yytext, "PREPOSITION"); }
+
+(and|but|or|while|because)                  { addToTable(yytext, "CONJUNCTION"); }
+
+(oh\!|wow\!|oops\!)                         { addToTable(yytext, "INTERJECTION"); }
+
+[a-zA-Z]+                                   { addToTable(yytext, "UNKNOWN"); }
+
+.                                           { printf("%-15s --> INVALID TOKEN\n", yytext); }
+
+%%
+
+int main()
+{
+    printf("Enter English words/sentence:\n");
+    printf("(Press Ctrl+Z then Enter to stop)\n\n");
+    yylex();
+    printTable();
+    return 0;
+}
+
+
+//INPUT -> 
+// she and he walk with car she walk wow!
+// she and he walk with old man by blue ocean wow!
