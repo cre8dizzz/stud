@@ -1,0 +1,27 @@
+//LEX AND YACC
+yacc -d 4B.y
+lex 4B.l
+gcc lex.yy.c y.tab.c -o output -ll
+./output 
+
+//ONLY LEX
+flex 3B.l
+gcc lex.yy.c -o output
+./output
+======================================
+//BISON +FLEX
+sudo apt update
+sudo apt install flex bison gcc
+
+//LEX and YACC
+bison -d 3a.y
+flex 3a.l
+gcc lex.yy.c 3a.tab.c -o 3a
+./3a
+
+//LEX only
+flex 3a.l
+gcc lex.yy.c -o 3a
+./3a
+======================================
+
