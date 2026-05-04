@@ -224,24 +224,24 @@ public class MacroProcessor2 {
 //s.asm
 // LOAD A
 // STORE B
-
 // MACRO ABC
 // LOAD p
 // SUB q
 // MEND
-
 // MACRO ADDI ARG
 // LOAD X
 // STORE ARG
 // MEND
-
-
 // MACRO ADD5 A1,A2,A3
 // STORE A2
 // ADDI A1
 // LOAD A3
 // MEND
-
 // ABC
 // ADD5 D1,D2,D3
-// END
+// END 
+
+
+//HOW TO RUN
+// javac A2.java
+// java A2
