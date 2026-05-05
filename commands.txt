@@ -24,4 +24,15 @@ flex 3a.l
 gcc lex.yy.c -o 3a
 ./3a
 ======================================
+//TRY FIRST 
+//LEX ONLY 
+lex filename.l
+chmod +x filename
+./filename
 
+//LEX AND YACC
+lex filename.l
+yacc -d filename.y
+gcc lex.yy.c y.tab.c -o filename
+chmod +x filename
+./filename
